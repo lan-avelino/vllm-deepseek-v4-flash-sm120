@@ -14,6 +14,7 @@ on:
           - deepgemm-stack
           - mtp
           - dspark
+          - v20
 
 permissions:
   contents: read
@@ -35,7 +36,14 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
         run: |
-          python3 scripts/verify-lock.py
+          if [[ "$PROFILE" == v20 ]]; then
+            jq -e '.base_image and .model and .vllm_effective_commit and .vllm_gilded_gnosis_base_commit and .b12x_original_sha256 and .b12x_patched_sha256' v20.lock.json >/dev/null
+            grep -F "$(jq -r .base_image v20.lock.json)" Containerfile.v20 >/dev/null
+            grep -F "$(jq -r .b12x_original_sha256 v20.lock.json)" Containerfile.v20 >/dev/null
+            grep -F "$(jq -r .b12x_patched_sha256 v20.lock.json)" Containerfile.v20 >/dev/null
+          else
+            python3 scripts/verify-lock.py
+          fi
           if [[ "$PROFILE" == deepgemm || "$PROFILE" == deepgemm-stack ]]; then
             jq -e '
               .control_image.digest
@@ -48,6 +56,7 @@ jobs:
             }
           fi
       - name: Verify exact native wheel is available
+        if: inputs.profile != 'v20'
         run: bash scripts/verify-native-wheel.sh
       - name: Reclaim runner disk space
         run: |
@@ -120,7 +129,16 @@ jobs:
           PROFILE: ${{ inputs.profile }}
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY}:${PROFILE}"
-          if [[ "$PROFILE" == deepgemm || "$PROFILE" == deepgemm-stack ]]; then
+          if [[ "$PROFILE" == v20 ]]; then
+            docker buildx build \
+              --builder sm120-builder \
+              --file Containerfile.v20 \
+              --platform linux/amd64 \
+              --provenance=false \
+              --tag "$image" \
+              --push \
+              .
+          elif [[ "$PROFILE" == deepgemm || "$PROFILE" == deepgemm-stack ]]; then
             CONTAINER_ENGINE=docker \
             BUILDX_BUILDER=sm120-builder \
             BUILDX_PUSH=1 \
@@ -162,7 +180,7 @@ jobs:
           package=${GITHUB_REPOSITORY#*/}
           owner=${GITHUB_REPOSITORY_OWNER}
           gh api --paginate \
-            --jq '.[] | select((.metadata.container.tags | map(. == "control" or . == "deepgemm" or . == "deepgemm-stack" or . == "mtp" or . == "dspark") | any) | not) | .id' \
+            --jq '.[] | select((.metadata.container.tags | map(. == "control" or . == "deepgemm" or . == "deepgemm-stack" or . == "mtp" or . == "dspark" or . == "v20") | any) | not) | .id' \
             "/users/${owner}/packages/container/${package}/versions?per_page=100" \
             | while read -r id; do
               gh api --method DELETE \
@@ -185,7 +203,7 @@ jobs:
           test "$version_count" -eq "$tag_count"
           jq -e 'all(.[]; (.metadata.container.tags | length) == 1)' \
             "$versions" >/dev/null
-          if printf '%s\n' "$tags" | grep -Evq '^(control|deepgemm|deepgemm-stack|mtp|dspark)$'; then
+          if printf '%s\n' "$tags" | grep -Evq '^(control|deepgemm|deepgemm-stack|mtp|dspark|v20)$'; then
             echo "unexpected package tag remains" >&2
             exit 1
           fi

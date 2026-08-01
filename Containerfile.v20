@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=voipmonitor/vllm:gilded-gnosis-v20-vllm1e9c9c3-sieec30ff-fi801d57a-cu132-20260731-r16@sha256:48518e91cf87dd0c0483c76ff86e81dfc0f46de7e364b46f7a82c481ce08188f
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source="https://github.com/ormandj/vllm-deepseek-v4-flash-sm120"
+LABEL org.opencontainers.image.description="DeepSeek-V4-Flash-0731 vLLM v20 image with B12X compressed-MLA workspace reservation fix"
+
+COPY patches/vllm/vllm-b12x-compressed-mla-workspace.patch /tmp/vllm-b12x-compressed-mla-workspace.patch
+
+RUN set -eux; \
+    target=/opt/venv/lib/python3.12/site-packages/vllm/models/deepseek_v4/nvidia/b12x.py; \
+    echo "e028623d7efb36a3a645d69baef6540a57838496945c14a37f00111cca2e4633  ${target}" | sha256sum --check --strict; \
+    patch --batch --fuzz=0 -p1 -d /opt/venv/lib/python3.12/site-packages < /tmp/vllm-b12x-compressed-mla-workspace.patch; \
+    echo "522582e5e967283212a5e80d82b73eeab52b13526cdaa51b8176b71c7d97dedb  ${target}" | sha256sum --check --strict; \
+    rm /tmp/vllm-b12x-compressed-mla-workspace.patch

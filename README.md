@@ -12,6 +12,40 @@ the intended end state is that stock mainline needs no patches. See
 [What is included](#what-is-included) for the technical patch summary and
 [`UPSTREAM.md`](UPSTREAM.md) for the merge/dependency map.
 
+## DeepSeek-V4-Flash-0731 v20 validation image
+
+The `:v20` image derives from the digest-pinned Gilded Gnosis v20 r16 release
+and serves `deepseek-ai/DeepSeek-V4-Flash-0731` on two SM120 GPUs. It includes
+the B12X compressed-MLA workspace reservation fix under upstream review. The
+unpatched release reserved 578.50 MB during warmup, then requested 758.60 MB
+for a 186-row decode batch after the workspace was locked.
+
+Download the checkpoint:
+
+```bash
+uvx --from huggingface-hub hf download deepseek-ai/DeepSeek-V4-Flash-0731 \
+  --local-dir "$HOME/models/DeepSeek-V4-Flash-0731"
+```
+
+Start the current MTP0 quality-control profile:
+
+```bash
+MODEL_DIR="$HOME/models/DeepSeek-V4-Flash-0731" \
+CACHE_DIR="$HOME/.cache/vllm-deepseek-v4-flash-sm120/v20-mtp0" \
+./examples/serve-v20.sh
+```
+
+The launcher exposes an OpenAI-compatible endpoint at
+`http://localhost:8000/v1` with model name `deepseek-v4-flash`. It configures a
+1,048,576-token context limit, 2,048 batched tokens, 16 simultaneous sequences,
+FP8 KV, TP=2, and no speculative decoding. On two 96 GB RTX PRO 6000 Blackwell
+GPUs, startup reports 15.27 GiB available for KV, 2,824,026 KV tokens, and
+2.69× concurrency at the configured one-million-token context limit.
+
+For coding agents, use `reasoning_effort=max`, `temperature=1.0`, `top_p=0.95`,
+and `max_output_tokens=393216`. The 393,216-token output limit is required for
+both `high` and `max` reasoning effort by the model card.
+
 ## Recommended setup
 
 Use the `:dspark` image with the `deepseek-ai/DeepSeek-V4-Flash-DSpark`
@@ -120,6 +154,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 | Tag | Use |
 |---|---|
+| `:v20` | DeepSeek-V4-Flash-0731 Gilded Gnosis v20 MTP0 validation image with the B12X workspace reservation fix. |
 | `:dspark` | Recommended image for the DSpark checkpoint; DSpark:5 is the native tested configuration. |
 | `:mtp` | Standard-checkpoint alternative; MTP:2 is the best tested MTP width. |
 | `:control` | Matched upstream control without the performance carries; intended for comparison, not the recommended deployment. |
