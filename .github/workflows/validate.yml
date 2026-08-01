@@ -17,7 +17,11 @@ jobs:
       - name: Validate build inputs and shell
         run: |
           python3 -m json.tool stack.lock.json >/dev/null
+          python3 -m json.tool v20.lock.json >/dev/null
           python3 scripts/verify-lock.py
+          grep -F "$(jq -r .base_image v20.lock.json)" Containerfile.v20 >/dev/null
+          grep -F "$(jq -r .b12x_original_sha256 v20.lock.json)" Containerfile.v20 >/dev/null
+          grep -F "$(jq -r .b12x_patched_sha256 v20.lock.json)" Containerfile.v20 >/dev/null
           bash -n scripts/*.sh examples/*.sh
       - name: Verify every profile applies
         run: ./scripts/verify-patches.sh

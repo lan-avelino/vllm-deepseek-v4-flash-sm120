@@ -1,0 +1,87 @@
+diff --git a/vllm/models/deepseek_v4/nvidia/b12x.py b/vllm/models/deepseek_v4/nvidia/b12x.py
+--- a/vllm/models/deepseek_v4/nvidia/b12x.py
++++ b/vllm/models/deepseek_v4/nvidia/b12x.py
+@@ -518,7 +518,16 @@ class DeepseekV4B12xMLAAttention(DeepseekV4FlashMLAAttention):
+             views[key] = view
+         return view
+ 
+-    def _reserve_dummy_compressed_mla_scratch(self, q: torch.Tensor) -> None:
++    def _build_dummy_compressed_mla_plans(self, q: torch.Tensor) -> list:
++        """Plan the compressed-MLA scratch this layer can request at runtime.
++
++        Cached on the layer: the device and geometry the plans depend on are
++        fixed for the layer's lifetime.
++        """
++        cached = getattr(self, "_b12x_dummy_scratch_plans", None)
++        if cached is not None:
++            return cached
++
+         from sparkinfer.attention.compressed_mla import (
+             Caps as B12XCompressedMLAScratchCaps,
+         )
+@@ -541,27 +550,47 @@ class DeepseekV4B12xMLAAttention(DeepseekV4FlashMLAAttention):
+             indexed_width *= _C128A_TOPK_ALIGNMENT
+ 
+         width = max(int(self.window_size) + indexed_width, 1)
+-        rows = max(int(self.max_num_batched_tokens), 1)
++        max_rows = max(int(self.max_num_batched_tokens), 1)
+         decode_split_cap = max(1, _cdiv(width, _DECODE_SPLIT_TILE))
+-        num_splits_cap = compressed_mla_split_chunks_for_contract(
+-            rows=rows,
+-            width=width,
+-            max_chunks=decode_split_cap,
+-        )
+-        plan = plan_compressed_mla_scratch(
+-            B12XCompressedMLAScratchCaps(
+-                device=q.device,
+-                num_q_heads=int(q.shape[1]),
+-                max_q_rows=rows,
+-                max_width=width,
+-                head_dim=_DSV4_HEAD_DIM,
+-                v_head_dim=_DSV4_V_HEAD_DIM,
+-                page_size=int(self.swa_cache_layer.block_size),
+-                max_chunks_per_row=num_splits_cap,
++
++        # Scratch scales with rows * splits, but the b12x split contract is
++        # discontinuous in rows: decode-regime row counts take more splits than
++        # the batched-prefill regime, so the widest batch does not bound the
++        # product. Reserve the largest batch of every distinct split count.
++        widest_rows_per_split_count: dict[int, int] = {}
++        for rows in range(1, max_rows + 1):
++            num_splits_cap = int(
++                compressed_mla_split_chunks_for_contract(
++                    rows=rows,
++                    width=width,
++                    max_chunks=decode_split_cap,
++                )
+             )
+-        )
+-        current_workspace_manager().get_simultaneous(*plan.shapes_and_dtypes())
++            widest_rows_per_split_count[num_splits_cap] = rows
+ 
++        plans = [
++            plan_compressed_mla_scratch(
++                B12XCompressedMLAScratchCaps(
++                    device=q.device,
++                    num_q_heads=int(q.shape[1]),
++                    max_q_rows=rows,
++                    max_width=width,
++                    head_dim=_DSV4_HEAD_DIM,
++                    v_head_dim=_DSV4_V_HEAD_DIM,
++                    page_size=int(self.swa_cache_layer.block_size),
++                    max_chunks_per_row=num_splits_cap,
++                )
++            )
++            for num_splits_cap, rows in sorted(widest_rows_per_split_count.items())
++        ]
++        self._b12x_dummy_scratch_plans = plans
++        return plans
++
++    def _reserve_dummy_compressed_mla_scratch(self, q: torch.Tensor) -> None:
++        workspace_manager = current_workspace_manager()
++        for plan in self._build_dummy_compressed_mla_plans(q):
++            workspace_manager.get_simultaneous(*plan.shapes_and_dtypes())
++
+     def forward_mqa(
+         self,
+         q: torch.Tensor,

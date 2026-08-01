@@ -1,0 +1,8 @@
+{
+  "base_image": "voipmonitor/vllm:gilded-gnosis-v20-vllm1e9c9c3-sieec30ff-fi801d57a-cu132-20260731-r16@sha256:48518e91cf87dd0c0483c76ff86e81dfc0f46de7e364b46f7a82c481ce08188f",
+  "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+  "vllm_effective_commit": "1e9c9c3475fa30ab48d5639f8882f1e93bb552bf",
+  "vllm_gilded_gnosis_base_commit": "30038602b71395f481ef4a6edfe4fcf8551d9c15",
+  "b12x_original_sha256": "e028623d7efb36a3a645d69baef6540a57838496945c14a37f00111cca2e4633",
+  "b12x_patched_sha256": "522582e5e967283212a5e80d82b73eeab52b13526cdaa51b8176b71c7d97dedb"
+}
