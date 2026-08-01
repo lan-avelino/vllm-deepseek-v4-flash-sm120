@@ -31,6 +31,8 @@ if (( ${#native_changes[@]} > 0 )); then
   exit 1
 fi
 
+git -C "$work/vllm" checkout --detach "$vllm_commit"
+
 for name in \
   vllm-49059-sm120-empty-prefill.patch \
   vllm-sm12x-flashinfer-allreduce-selector.patch \
