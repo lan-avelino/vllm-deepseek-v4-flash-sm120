@@ -49,9 +49,12 @@ locked digest, and pulls every blob back to confirm the tag is actually
 pullable. It warns without failing if the upstream tag has since moved to a
 different digest, and always mirrors the locked digest.
 
-Newly created GHCR packages are private by default. A mirrored package must be
-made public once, under the package's **Package settings → Danger Zone →
-Change visibility**, to avoid private-package storage and egress charges.
+This package is public: GHCR gave it the visibility of the public repository it
+is linked to, and it was confirmed anonymously pullable after mirroring. Public
+packages carry no GHCR storage or egress charges. If a future mirrored package
+comes out private, make it public under **Package settings → Danger Zone →
+Change visibility**, otherwise its storage and every pull outside GitHub
+Actions are billed.
 
 ## Syncing new upstream commits
 
