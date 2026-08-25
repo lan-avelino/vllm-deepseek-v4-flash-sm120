@@ -1,0 +1,13 @@
+{
+  "source_repository": "ghcr.io/ormandj/vllm-deepseek-v4-flash-sm120",
+  "images": [
+    {
+      "tag": "v20",
+      "digest": "sha256:dc19ea2f75d8217cbb0fbc01d8734af79b02e84f0c9cda49e1c137db2c5c902b",
+      "media_type": "application/vnd.oci.image.manifest.v1+json",
+      "layers": 37,
+      "compressed_bytes": 12574871306,
+      "note": "DeepSeek-V4-Flash-0731 vLLM v20 image with the B12X compressed-MLA workspace reservation fix; resolved from the upstream :v20 tag on 2026-08-25"
+    }
+  ]
+}

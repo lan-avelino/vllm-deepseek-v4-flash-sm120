@@ -1,0 +1,137 @@
+name: Mirror upstream image
+
+# Copies the upstream published images listed in mirror.lock.json into this
+# account's GHCR namespace, pinned by digest. This exists so the images this
+# repository documents remain pullable even if the upstream package is deleted.
+#
+# The copy is registry-to-registry (ghcr.io to ghcr.io), so blobs are mounted
+# across repositories rather than downloaded and re-uploaded where the registry
+# allows it. Nothing is rebuilt: the mirrored manifest is byte-identical to
+# upstream, so the destination digest must equal the source digest.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag from mirror.lock.json to mirror (or "all")
+        required: true
+        type: string
+        default: all
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: mirror-image
+  cancel-in-progress: false
+
+env:
+  CRANE_VERSION: v0.21.9
+  CRANE_SHA256: 5c16d8ddb971cb1d5e6ed8b1e743da8224414eeba2c2762d8f1a61b2f095699e
+
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Verify locked inputs
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          jq -e '.source_repository and (.images | length > 0)' mirror.lock.json >/dev/null
+          jq -e 'all(.images[];
+              (.tag | test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))
+              and (.digest | test("^sha256:[0-9a-f]{64}$")))' \
+            mirror.lock.json >/dev/null
+          if [[ "$TAG" != all ]]; then
+            jq -e --arg tag "$TAG" 'any(.images[]; .tag == $tag)' \
+              mirror.lock.json >/dev/null || {
+              echo "tag $TAG is not present in mirror.lock.json" >&2
+              exit 1
+            }
+          fi
+
+      - name: Install pinned crane
+        run: |
+          set -euo pipefail
+          asset=go-containerregistry_Linux_x86_64.tar.gz
+          curl --fail --silent --show-error --location --output "$asset" \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${asset}"
+          echo "${CRANE_SHA256}  ${asset}" | sha256sum --check --strict
+          tar --extract --file "$asset" crane
+          sudo install -m 0755 crane /usr/local/bin/crane
+          rm -f "$asset" crane
+          crane version
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if printf '%s' "$GITHUB_TOKEN" \
+              | crane auth login ghcr.io \
+                  --username '${{ github.actor }}' \
+                  --password-stdin; then
+              break
+            fi
+            if (( attempt == 3 )); then
+              echo "GHCR login failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Copy images by digest and verify
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          source_repo=$(jq -r .source_repository mirror.lock.json)
+          dest_repo="ghcr.io/${GITHUB_REPOSITORY}"
+          if [[ "$TAG" == all ]]; then
+            selected=$(jq -r '.images[].tag' mirror.lock.json)
+          else
+            selected="$TAG"
+          fi
+
+          for tag in $selected; do
+            digest=$(jq -r --arg tag "$tag" \
+              '.images[] | select(.tag == $tag) | .digest' mirror.lock.json)
+            source_ref="${source_repo}@${digest}"
+            dest_ref="${dest_repo}:${tag}"
+
+            # Confirm upstream still serves the locked digest before copying, so
+            # a silently retagged or replaced upstream image fails loudly here
+            # rather than being mirrored as if it were the locked one.
+            upstream_tag_digest=$(crane digest "${source_repo}:${tag}" || true)
+            if [[ "$upstream_tag_digest" != "$digest" ]]; then
+              echo "::warning title=Upstream tag moved::${source_repo}:${tag} now resolves to ${upstream_tag_digest:-<unavailable>}; mirroring the locked ${digest}"
+            fi
+
+            echo "copying ${source_ref} -> ${dest_ref}"
+            crane copy "$source_ref" "$dest_ref"
+
+            mirrored_digest=$(crane digest "$dest_ref")
+            if [[ "$mirrored_digest" != "$digest" ]]; then
+              echo "mirrored ${dest_ref} is ${mirrored_digest}, expected ${digest}" >&2
+              exit 1
+            fi
+
+            # A manifest can be present while a blob it references is not,
+            # which otherwise only surfaces at pull time on the GPU host. This
+            # pulls every blob back from the destination and rehashes it, so a
+            # green run means the mirrored tag is genuinely pullable.
+            crane validate --remote "$dest_ref"
+
+            crane manifest "${dest_repo}@${digest}" > manifest.json
+            jq -e '.config.digest and (.layers | length > 0)' manifest.json >/dev/null
+            layer_count=$(jq '.layers | length' manifest.json)
+            rm -f manifest.json
+
+            echo "::notice title=Mirrored ${tag}::${dest_ref}@${digest} (${layer_count} layers verified)"
+          done
